@@ -1,0 +1,284 @@
+#!/bin/bash
+BOLD="\033[1;30m" 
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'  
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+user=`ls -l /dev/console | awk '/ / { print $3 }'`
+export HISTIGNORE='*sudo -S*'
+
+CACHEDISK="/Volumes/macOSCache"
+PKG="/InstallAssistant.pkg"
+TMPDIR="/tmp"
+cd ${TMPDIR}
+
+
+
+
+
+
+function runInSystemMode () {
+
+
+FREEDISK=$(df -h / | awk {'print $4'} | grep -v "Avail" | tr -d "Gi")
+if [ ${FREEDISK} -lt 36 ]; then
+	echo -e "${RED}[ERROR]:${NC} 35.5GB available storage on macOS Sierra or later required."
+	exit 1
+fi
+
+
+latestVersionUrl=$(curl -s http://macos.it-profs.de/macos/latest.php?version)
+
+
+InfoPlist=$(curl -s ${latestVersionUrl} -o /tmp/Info.plist) 
+ServerVersion=$(cat /tmp/Info.plist|  grep -A1 "OSVersion" | cut -f2 -d ">" | sort | head -n1 | cut -f1 -d "<")
+echo -e "${GREEN}[INFO]:${NC} Erase and install the latest ${BOLD}macOS ${ServerVersion}${NC}."
+os_ver=$(sw_vers -productVersion)
+
+enabledUser=$(sysadminctl -secureTokenStatus "$user"  2>&1  | awk -v user="$user" '{if ($7=="ENABLED") print user}')
+
+if [[ $enabledUser == $user ]]; then
+	echo -e "${GREEN}[INFO]:${NC} $user secureTokenStatus check passed."
+else
+	if [[ "$os_ver" == 11.* ]]; then
+		echo -e "${RED}[INFO]:${NC} $user has no SecureToken. It seems user $enabledUser has a secureToken."
+		exit 1
+	else
+		echo -e "${GREEN}[INFO]:${NC} $user has no SecureToken nut we contiue in the macOS version."
+	fi
+
+fi
+
+
+
+
+# get latest macOS Install PKG URL
+macOSBigSurURL=$(curl -s http://macos.it-profs.de/macos/latest.php)
+
+
+
+	if [[ -f ${CACHEDISK}${PKG} ]]; then      
+	    	
+	    	echo -e "${GREEN}[INFO]:${NC} Install macOS Big Sur.app from cache disk.."
+	    	installer -pkg ${CACHEDISK}${PKG} -target / >/dev/null
+
+	    	### we have to install the cached Package at first because otherwise we can not the version
+	    	echo -e "${GREEN}[INFO]:${NC} compare macOS versions.."
+	    	checkInstallerVersion=$(defaults read /Applications/Install\ macOS\ Big\ Sur.app/Contents/Info.plist DTPlatformVersion)
+	    
+		    if [ "$ServerVersion" = "$checkInstallerVersion" ]; then
+	    		echo -e "${GREEN}[INFO]:${NC} The cached installer is on latest version ${checkInstallerVersion}."
+
+			else
+  		
+
+	    		#### Additonal check becasue i saw in the past that the Info.Plist e.q. macOS 11.2.1 return just 11.2 instead of 11.2.1
+	    		# Attach Installation Source
+	    		SilentAttach=$(hdiutil attach -quiet -noverify /Applications/Install\ macOS\ Big\ Sur.app/Contents/SharedSupport/SharedSupport.dmg)
+	    		# 
+				checkDMGVersion=$(cat /Volumes/Shared\ Support/com_apple_MobileAsset_MacSoftwareUpdate/com_apple_MobileAsset_MacSoftwareUpdate.xml | grep -A1 "OSVersion" | grep string | cut -f2 -d ">" | cut -f1 -d "<")
+				SilentUnmount=$(diskutil umount force /Volumes/Shared\ Support >/dev/null)
+
+				if [ "$ServerVersion" = "$checkDMGVersion" ]; then
+	    			## second check -> now it seems the cached and server version match 
+	    			echo -e "${GREEN}[INFO]:${NC} The cached installer is on latest version ${checkDMGVersion}."
+	    		else
+		    			## still not match - ask user for download new version
+		    		echo -e "${BLUE}[INFO]:${NC} The cached installer does not match with server version."
+	    			echo -e "${BLUE}[INFO]:${NC} Cached: ${checkInstallerVersion}"
+	    			echo -e "${BLUE}[INFO]:${NC} Server: ${ServerVersion}"
+					echo -n "Do you want to save the server version to your cache disk (y/n)? "
+					read answer < /dev/tty
+					if [ "$answer" != "${answer#[Yy]}" ] ;then
+		  			  curl --progress-bar -O $macOSBigSurURL 
+		  			  rm -f ${CACHEDISK}${PKG} / >/dev/null
+		  			  rsync --progress "${TMPDIR}${PKG}" ${CACHEDISK}${PKG}
+		  			  echo -e "${GREEN}[INFO]:${NC} Install macOS Big Sur.app from cache disk.."
+		  			  installer -pkg "${TMPDIR}${PKG}" -target / >/dev/null
+					fi
+				fi 
+			fi	
+
+
+	else
+			# Cached installer does not exist - Download from URL
+			SHORT_URL=$(echo ${macOSBigSurURL:0:50})
+			echo -e "${GREEN}[INFO]:${NC} Download installer from Apple: $SHORT_URL.."
+
+			### check if file already downloaded 
+			if [[ -f ${TMPDIR}${PKG} ]]; then
+				echo -n "The Installer already exist. Do you want to use the local version (y/n)? "
+				read answerLocal < /dev/tty	
+				if [ "$answerLocal" != "${answerLocal#[Yy]}" ] ;then
+					echo -e "${GREEN}[INFO]:${NC} use local installer from ${TMPDIR}${PKG}"
+				else
+					# delete old installer
+					rm ${TMPDIR}${PKG}
+					curl --progress-bar -O $macOSBigSurURL    
+				fi
+			else
+			### no file exist in tmp path. Download InstallAssitant.pkg	
+			curl --progress-bar -O $macOSBigSurURL    	
+
+			fi     
+
+
+			# if a disk exist named macSOCache we ask to store the installer for later use
+			if [[ -d ${CACHEDISK} ]]; then 
+
+			    echo -n "${GREEN}[INFO]: Do you want to save the installer to the cache disk (y/n)? "
+				read answer < /dev/tty
+				
+				if [ "$answer" != "${answer#[Yy]}" ] ;then
+					rm -f ${CACHEDISK}${PKG} / >/dev/null
+		  			rsync --progress "${TMPDIR}${PKG}" ${CACHEDISK}${PKG}
+		  		fi			
+		  	fi
+
+
+			echo -e "${GREEN}[INFO]:${NC} Installing application Install macOS Big Sur.app"
+			installer -pkg "${TMPDIR}${PKG}" -target /  >/dev/null
+	fi
+
+
+ 
+
+if [[ "$os_ver" == 10.* ]]; then
+/Applications/Install\ macOS\ Big\ Sur.app/Contents/Resources/startosinstall --agreetolicense --eraseinstall --forcequitapps --newvolumename "Macintosh HD" > /dev/null 2>&1  
+elif [[ "$os_ver" == 11.* ]]; then
+/Applications/Install\ macOS\ Big\ Sur.app/Contents/Resources/startosinstall --agreetolicense --eraseinstall --newvolumename "Macintosh HD" --forcequitapps --passprompt
+
+else
+    echo "unknown macOS Version"
+fi
+
+}
+
+############ end of system mode erase #########
+
+function runRecoveryMode () {
+
+echo -e "\n${RED}[WARNING]:${NC} This script remove all data on your computer!"
+echo -e "${RED}[WARNING]:${NC} Press CTRL-Z to cancel this process."
+echo -e "${GREEN}[INFO]:${NC} Start macOS Big Sur recover for M1.. "
+
+if [[ -d '/Volumes/Untitled' ]]; then      
+        dstDisk='/Volumes/Untitled'
+        dstDiskName="Untitled"
+fi
+
+if [[ -d '/Volumes/Macintosh HD' ]]; then
+        dstDisk='/Volumes/Macintosh HD'
+        dstDiskName="Macintosh HD"
+fi
+
+
+
+echo -e "${GREEN}[INFO]:${NC} Destination disk is: ${dstDisk}"
+echo -e "${RED}"
+echo -n "Do you want to delete all data on this computer? (y/n) :"
+echo -e "${NC}"				
+read answer < /dev/tty
+if [ "$answer" != "${answer#[Yy]}" ] ;then
+	internalDisk=$(diskutil list | grep "synthesized" | awk -F " " {'print $1'} | awk -F "/" {'print $3'} |head -1)
+	echo -e "${GREEN}[INFO]:${NC} APFS synthesized disk is: ${internalDisk}"
+	DSK_MACINTOSH_HD=$(diskutil list $internalDisk | grep -i "${dstDiskName}" |  grep -vi "data" | awk {'print $NF'} )
+	echo -e "${GREEN}[INFO]:${NC} APFS Macintosh HD disk is: ${DSK_MACINTOSH_HD}"
+	DSK_MACINTOSH_HD_DATA=$(diskutil list $internalDisk | grep -i "DATA" | awk {'print $NF'})
+	
+	if [ -z "$DSK_MACINTOSH_HD_DATA" ]
+	then
+	      echo -e "${BLUE}[INFO]:${NC} APFS Data HD not found."
+	else
+	      echo -e "${GREEN}[INFO]:${NC} APFS Data HD disk is: ${DSK_MACINTOSH_HD_DATA}"
+	      umount -f /dev/${DSK_MACINTOSH_HD_DATA} /dev/null &> /dev/null
+		  #### delete DATA Volume
+		  diskutil apfs deleteVolume ${DSK_MACINTOSH_HD_DATA} &> /dev/null
+	fi
+
+
+
+
+	#diskutil apfs eraseVolume ${DSK_MACINTOSH_HD} -name "Macintosh HD" &> /dev/null
+	dstDisk='/Volumes/Macintosh HD'
+    dstDiskName='Macintosh HD'
+
+fi
+
+sleep 1
+rm -rf "${dstDisk}"/private/tmp/* >/dev/null 2>&1
+mkdir -p "${dstDisk}"/private/tmp
+
+cd "${dstDisk}/private/tmp/"
+echo -e "${GREEN}[INFO]:${NC} Looking for a local copy of InstallAssistant.pkg.."
+
+	if [[ -f ${CACHEDISK}'/InstallAssistant.pkg' ]]; then      
+	    echo -e "${GREEN}[INFO]:${NC} Local installer exist copy files.. "
+	    cp "${CACHEDISK}/InstallAssistant.pkg" .
+
+	else
+		echo -e "${GREEN}[INFO]:${NC} Local installer does not exist download files from Apple.. "
+		macOSBigSurURL=$(curl -s http://macos.it-profs.de/macos/latest.php)
+
+		curl -L --progress-bar  -f -o InstallAssistant.pkg ${macOSBigSurURL}
+		 if [[ $? -eq 0 ]]; then
+		 echo -e "${GREEN}[INFO]:${NC} macOS is now loaded.. "
+		else 
+			echo -e "${RED}[INFO]:${NC} download failed.. exiting "
+		fi
+
+	fi
+
+# extract all data to Source directory 
+pkgutil --expand-full InstallAssistant.pkg Source
+
+cp -R 'Source/Payload/Applications/Install macOS Big Sur.app' "${dstDisk}"/private/tmp/
+mkdir -p Install\ macOS\ Big\ Sur.app/Contents/SharedSupport
+/bin/chmod 0755 Install\ macOS\ Big\ Sur.app/Contents/SharedSupport
+mv InstallAssistant.pkg Install\ macOS\ Big\ Sur.app/Contents/SharedSupport/SharedSupport.dmg
+/bin/chmod 0644 Install\ macOS\ Big\ Sur.app/Contents/SharedSupport/SharedSupport.dmg
+/usr/sbin/chown -R root:wheel Install\ macOS\ Big\ Sur.app/Contents/SharedSupport/SharedSupport.dmg
+/usr/bin/chflags -h norestricted Install\ macOS\ Big\ Sur.app/Contents/SharedSupport/SharedSupport.dmg
+rm -rf Source
+rm -rf InstallAssistant.pkg
+
+
+
+echo -e "${GREEN}[INFO]:${NC} start installer.. "
+externalDisk=$(diskutil list | grep external | awk -F " " {'print $1'})
+diskutil umountDisk $externalDisk
+"${dstDisk}"/private/tmp/Install\ macOS\ Big\ Sur.app/Contents/MacOS/InstallAssistant_springboard >/dev/null
+
+}
+                                                                                                                                                                           
+
+
+
+
+
+
+
+if [[ $USER != "root" ]]; then  
+	echo -e "${RED}[WARNING]:${NC} This script must be run as root. Try the sudo command."
+  	exit
+fi
+ 
+## Check if machine running in Recovery Mode
+if [[ -f "/usr/bin/rsync" ]]; then   
+	echo -e "\n${RED}[WARNING]:${NC} This script remove all data on your computer!"
+	echo -e "${RED}[WARNING]:${NC} Press CTRL-Z to cancel this process."
+	echo -e "${GREEN}[INFO]:${NC} run script in booted system mode."
+	runInSystemMode
+
+else
+	echo -e "${GREEN}[INFO]:${NC} run script in recovery mode."
+
+	 CPU_TYPE=$(sysctl -a | grep machdep.cpu.brand_string | awk -F": " {'print $2'})
+ 	 if [[ $CPU_TYPE == *"Apple M1"* ]]; then
+		echo -e "${GREEN}[INFO]:${NC} machine has a Apple M1 CPU."
+		runRecoveryMode
+     else
+     	echo -e "${GREEN}[INFO]:${NC} machine has Intel CPU."
+     fi	
+
+fi
