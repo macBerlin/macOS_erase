@@ -12,11 +12,6 @@ PKG="/InstallAssistant.pkg"
 TMPDIR="/tmp"
 cd ${TMPDIR}
 
-
-
-
-
-
 function runInSystemMode () {
 
 
@@ -27,12 +22,14 @@ if [ ${FREEDISK} -lt 36 ]; then
 fi
 
 
+### get the last version InstallInfo.plist URL 
 latestVersionUrl=$(curl -s http://macos.it-profs.de/macos/latest.php?version)
 
-
+### get the last macOS version number e.q. 11.2.3
 InfoPlist=$(curl -s ${latestVersionUrl} -o /tmp/Info.plist) 
 ServerVersion=$(cat /tmp/Info.plist|  grep -A1 "OSVersion" | cut -f2 -d ">" | sort | head -n1 | cut -f1 -d "<")
 echo -e "${GREEN}[INFO]:${NC} Erase and install the latest ${BOLD}macOS ${ServerVersion}${NC}."
+
 os_ver=$(sw_vers -productVersion)
 
 enabledUser=$(sysadminctl -secureTokenStatus "$user"  2>&1  | awk -v user="$user" '{if ($7=="ENABLED") print user}')
@@ -82,19 +79,19 @@ macOSBigSurURL=$(curl -s http://macos.it-profs.de/macos/latest.php)
 				if [ "$ServerVersion" = "$checkDMGVersion" ]; then
 	    			## second check -> now it seems the cached and server version match 
 	    			echo -e "${GREEN}[INFO]:${NC} The cached installer is on latest version ${checkDMGVersion}."
-	    		else
-		    			## still not match - ask user for download new version
-		    		echo -e "${BLUE}[INFO]:${NC} The cached installer does not match with server version."
-	    			echo -e "${BLUE}[INFO]:${NC} Cached: ${checkInstallerVersion}"
-	    			echo -e "${BLUE}[INFO]:${NC} Server: ${ServerVersion}"
+	    			else
+					## still not match - ask user for download new version
+					echo -e "${BLUE}[INFO]:${NC} The cached installer does not match with server version."
+					echo -e "${BLUE}[INFO]:${NC} Cached: ${checkInstallerVersion}"
+					echo -e "${BLUE}[INFO]:${NC} Server: ${ServerVersion}"
 					echo -n "Do you want to save the server version to your cache disk (y/n)? "
 					read answer < /dev/tty
 					if [ "$answer" != "${answer#[Yy]}" ] ;then
-		  			  curl --progress-bar -O $macOSBigSurURL 
-		  			  rm -f ${CACHEDISK}${PKG} / >/dev/null
-		  			  rsync --progress "${TMPDIR}${PKG}" ${CACHEDISK}${PKG}
-		  			  echo -e "${GREEN}[INFO]:${NC} Install macOS Big Sur.app from cache disk.."
-		  			  installer -pkg "${TMPDIR}${PKG}" -target / >/dev/null
+						curl --progress-bar -O $macOSBigSurURL 
+						rm -f ${CACHEDISK}${PKG} / >/dev/null
+						rsync --progress "${TMPDIR}${PKG}" ${CACHEDISK}${PKG}
+						echo -e "${GREEN}[INFO]:${NC} Install macOS Big Sur.app from cache disk.."
+						installer -pkg "${TMPDIR}${PKG}" -target / >/dev/null
 					fi
 				fi 
 			fi	
